@@ -1,8 +1,25 @@
-// https://ipc2u.com/articles/knowledge-base/modbus-rtu-made-simple-with-detailed-descriptions-and-examples/#write_discr_out
+// Enable by #define MBIO_ENABLE 1 in my_machine.h.
+// Enable debug by #define MBIO_DEBUG in my_machine.h.
 
-// turn on DO1: M101 D2 E5 P1 Q1
-// turn off DO1: M101 D2 E5 P1 Q0
-// read DI2: M101 D2 E2 P2 Q1
+// Short description how to use it:
+
+// M101 D{0..247} E{1,2,3,4,5,6} P{1..9999} [Q{0..65535}]
+// - D{0..247} - device address
+// - E{2,3,4,5,6} - function code, see https://ipc2u.com/articles/knowledge-base/modbus-rtu-made-simple-with-detailed-descriptions-and-examples/#cmnd
+// - P{1..9999} - register address; 
+// - Q{0..65535} - register value, optional, required for function codes {1,5,6}
+
+// turn on DO1 on slave with address 2: M101 D2 E5 P1 Q1
+// turn off DO1 on slave with address 2: M101 D2 E5 P1 Q0
+// read DI2 on slave with address 2: M101 D2 E2 P2 Q1
+// read DO1-DO4 on slave with address 2: M101 D2 E1 P1 Q4
+// read holding register 254 on slave with address 2: M101 D2 E3 P254
+// read AI3 on slave with address 2: M101 D2 E4 P3 
+
+// the read values are stored in sys.var5399 for use in the ATC macro, but not tested
+
+// so far tested only with https://www.aliexpress.com/item/1005004933766085.html
+
 
 #include "driver.h"
 
@@ -280,27 +297,27 @@ static void mbio_execute(sys_state_t state, parser_block_t *gc_block) {
             }
 
             switch ((char)gc_block->values.e) {
-                case ModBus_ReadCoils:
+                case ModBus_ReadCoils: // 1
                     mbio_ModBus_ReadCoils(device_address, register_address, value);
                     break;
 
-                case ModBus_ReadDiscreteInputs:
+                case ModBus_ReadDiscreteInputs: // 2
                     mbio_ModBus_ReadDiscreteInputs(device_address, register_address, 1);
                     break;
 
-                case ModBus_ReadInputRegisters:
+                case ModBus_ReadInputRegisters: // 4
                     mbio_ModBus_ReadInputRegisters(device_address, register_address, 1);
                     break;
 
-                case ModBus_ReadHoldingRegisters:
+                case ModBus_ReadHoldingRegisters: // 3
                     mbio_ModBus_ReadHoldingRegisters(device_address, register_address);
                     break;
 
-                case ModBus_WriteCoil:
+                case ModBus_WriteCoil: // 5
                     mbio_ModBus_WriteCoil(device_address, register_address, value);
                     break;
 
-                case ModBus_WriteRegister:
+                case ModBus_WriteRegister: // 6
                     mbio_ModBus_WriteRegister(device_address, register_address, value);
                     break;
             }
