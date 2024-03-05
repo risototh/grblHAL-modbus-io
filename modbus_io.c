@@ -473,10 +473,6 @@ static void mbio_rx_packet (modbus_message_t *msg) {
                         break;
                 }
 #endif
-                /*
-                spindle_data.rpm = (float)((msg->adu[4] << 8) | msg->adu[5]) * rpm_at_50Hz / 5000.0f;
-                vfd_state.at_speed = settings.spindle.at_speed_tolerance <= 0.0f || (spindle_data.rpm >= spindle_data.rpm_low_limit && spindle_data.rpm <= spindle_data.rpm_high_limit);
-                */
                 break;
 
             default:
