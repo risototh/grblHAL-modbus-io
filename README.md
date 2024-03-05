@@ -6,9 +6,10 @@ It's not perfect, maybe it has some bugs (I'm pretty sure that it has...), but i
 My intention was to mount small I/O board directly on top of the ATC capable spindle to control the solenoids and reading the sensors directly from the spindle, without the need of another bulky cable. The bonus is, that this is less prone to interference, that analog signals.
 
 This plugin is written for the Teensy 4.1 based open source board made by Phil Barrett: https://github.com/phil-barrett/grblHAL-teensy-4.x
+
 Plugin was tested with this board: https://www.aliexpress.com/item/1005004933766085.html
 
-> Note: The extension board must be set up to the same baudrate and setting. Usually something like 19200 8N1, or 38400 8N1.
+> Note: The extension board must be set up to the same baudrate and async setting as the grblHAL board. Usually something like 19200 8N1, or 38400 8N1. This can be achieved by setting the `MODBUS_BAUDRATE` constant in _my_machine.h_. 
 
 ### HOW TO INSTALL
 
@@ -42,7 +43,7 @@ There are two M-codes implemented for now. `M101` and `M102`.
 Format of **M101** is: `M101 D{0..247} E{1,2,3,4,5,6} P{1..9999} [Q{0..65535}]`
 - D{0..247} - device address
 - E{2,3,4,5,6} - function code, see https://ipc2u.com/articles/knowledge-base/modbus-rtu-made-simple-with-detailed-descriptions-and-examples/#cmnd
-- P{1..9999} - register address; 
+- P{1..9999} - register address
 - Q{0..65535} - register value, optional, required for function codes {1,5,6}
 
 **Examples:**
@@ -56,6 +57,11 @@ Format of **M101** is: `M101 D{0..247} E{1,2,3,4,5,6} P{1..9999} [Q{0..65535}]`
 The read values are stored in _sys.var5399_ for use in the ATC macro, but not tested so far.
 
 Format of **M102** is: `M102 D{0..247} P{1..9999} Q{0,1} R{0.0 .. 3600.0}`
+- D{0..247} - device address
+- P{1..9999} - register address
+- Q{0,1} - register value to wait for
+- R{0.0 .. 3600.0} - timeout in seconds (it will be more, as the MODBUS communication is currently not counted in)
+
 
 **Examples**
 - read DI2 on slave with address 2, wait for 1 up to 10 seconds: `M102 D2 P2 Q1 R10`
