@@ -1,25 +1,23 @@
-// Enable by #define MBIO_ENABLE 1 in my_machine.h.
-// Enable debug by #define MBIO_DEBUG in my_machine.h.
+/*
 
-// Short description how to use it:
+modbus_io.c - plugin for for MODBUS I/O extension of grblHAL
 
-// M101 D{0..247} E{1,2,3,4,5,6} P{1..9999} [Q{0..65535}]
-// - D{0..247} - device address
-// - E{2,3,4,5,6} - function code, see https://ipc2u.com/articles/knowledge-base/modbus-rtu-made-simple-with-detailed-descriptions-and-examples/#cmnd
-// - P{1..9999} - register address; 
-// - Q{0..65535} - register value, optional, required for function codes {1,5,6}
+Copyright (c) 2024 Richard Toth
 
-// turn on DO1 on slave with address 2: M101 D2 E5 P1 Q1
-// turn off DO1 on slave with address 2: M101 D2 E5 P1 Q0
-// read DI2 on slave with address 2: M101 D2 E2 P2 Q1
-// read DO1-DO4 on slave with address 2: M101 D2 E1 P1 Q4
-// read holding register 254 on slave with address 2: M101 D2 E3 P254
-// read AI3 on slave with address 2: M101 D2 E4 P3 
+This plugin is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
 
-// the read values are stored in sys.var5399 for use in the ATC macro, but not tested
+This plugin is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
 
-// so far tested only with https://www.aliexpress.com/item/1005004933766085.html
+You should have received a copy of the GNU General Public License
+along with this plugin.  If not, see <http://www.gnu.org/licenses/>.
 
+*/
 
 #include "driver.h"
 
@@ -70,7 +68,6 @@ static void mbio_rx_exception(uint8_t code, void *context) {
     // emptied on a warm reset). Exception is during cold start, where alarms need to be queued.
     mbio_failed();
 }
-
 
 static void mbio_report_options(bool newopt) {
     on_report_options(newopt);
@@ -189,29 +186,56 @@ void mbio_ModBus_WriteRegister(char device_address, uint16_t register_address, u
     mbio_modbus_send_command(_cmd, true);
 }
 
+int32_t mbio_Wait_ReadDiscreteInputs(char device_address, uint16_t register_address, int32_t value, float timeout) {
+    int32_t ret = -1;
+    uint_fast16_t delay = (uint_fast16_t)ceilf((1000.0f / MBIO_WAIT_STEP) * timeout) + 1;
+
+    do {
+        mbio_ModBus_ReadDiscreteInputs(device_address, register_address, 1);
+        if (sys.var5399 == value) {
+            ret = value;
+            break;
+        }
+        
+        if (delay) {
+            protocol_execute_realtime();
+            hal.delay_ms(50, NULL);
+        } 
+        else {
+            break;
+        }
+    } while(--delay && !sys.abort);
+
+#ifdef MBIO_DEBUG
+    char buf[40];
+    sprintf(buf, "MODBUS WAIT VAL: %d, expected %d, rt %.2f s", ret, value, delay * MBIO_WAIT_STEP / 1000.0f);
+    report_message(buf, Message_Plain);
+
+#endif
+
+    return ret;
+}
+
 
 // Check if M-code is handled here.
 // parameters: mcode - M-code to check for (some are predefined in user_mcode_t in grbl/gcode.h), use a cast if not.
 // returns:    mcode if handled, UserMCode_Ignore otherwise (UserMCode_Ignore is defined in grbl/gcode.h).
 static user_mcode_t mbio_check(user_mcode_t mcode) {
-    return mcode == UserMCode_Generic1
+    return mcode == UserMCode_Generic1 || mcode == UserMCode_Generic2
                      ? mcode
                      : (user_mcode.check ? user_mcode.check(mcode) : UserMCode_Ignore);
 }
 
-// Validate M-code parameters: 
-// - D[0..247] - device address
-// - E[2,3,4,5,6] - function code; 
-// - P[1..9999] - register address; 
-// - Q[0..65535] - register value
+// Validate M-code parameters
 // parameters: gc_block - pointer to parser_block_t struct (defined in grbl/gcode.h).
-//             deprecated - 
+//             deprecated - ?
 // returns:    status_code_t enum (defined in grbl/gcode.h): Status_OK if validated ok, appropriate status from enum if not.
 static status_code_t mbio_validate(parser_block_t *gc_block, parameter_words_t *deprecated) {
 	status_code_t state = Status_GcodeValueWordMissing;
 
     switch (gc_block->user_mcode) {
 
+        // M101 D{0..247} E{1,2,3,4,5,6} P{1..9999} [Q{0..65535}]
         case UserMCode_Generic1:
             // device address D[0..247]: required
             if (!gc_block->words.d || !isintf(gc_block->values.d)) { // Check if D parameter value is supplied.
@@ -228,8 +252,8 @@ static status_code_t mbio_validate(parser_block_t *gc_block, parameter_words_t *
                 state = Status_BadNumberFormat;
             }
 
-            // value Q[0..65535]: optional, some functions (2,4) have fixed value
-            // add check for required Q on certain E!
+            // value Q[0.0 .. 65535.0]: optional, some functions (2,4) have fixed value
+            // TODO add check for required Q on certain E!
             if (gc_block->words.q && !isintf(gc_block->values.q)) { // Check if Q parameter value is supplied.
                 state = Status_BadNumberFormat;
             }
@@ -243,9 +267,9 @@ static status_code_t mbio_validate(parser_block_t *gc_block, parameter_words_t *
                         && gc_block->values.e != (float)ModBus_WriteCoil && gc_block->values.e != (float)ModBus_WriteRegister
                         && gc_block->values.e != (float)ModBus_ReadHoldingRegisters && gc_block->values.e != (float)ModBus_ReadCoils)
                     ||
-                    gc_block->values.p < 1.0f || gc_block->values.d > 9999.0f
+                    gc_block->values.p < 1.0f || gc_block->values.p > 9999.0f
                     ||
-                    gc_block->values.q < 0.0f || gc_block->values.d > 65535.0f) {
+                    gc_block->values.q < 0.0f || gc_block->values.q > 65535.0f) {
                 	
                     state = Status_GcodeValueOutOfRange;                    
                 }
@@ -269,6 +293,49 @@ static status_code_t mbio_validate(parser_block_t *gc_block, parameter_words_t *
             }
             break;
 
+        // M102 D{0..247} P{1..9999} Q{0,1} R{0..3600}
+        case UserMCode_Generic2: 
+            // device address D[0..247]: required
+            if (!gc_block->words.d || !isintf(gc_block->values.d)) {
+                state = Status_BadNumberFormat;
+            }
+
+            // register address P[1..9999]: required
+            if (!gc_block->words.p || !isintf(gc_block->values.p)) {
+                state = Status_BadNumberFormat;
+            }
+
+            // value Q[0,1]: required
+            if (!gc_block->words.q || !isintf(gc_block->values.q)) {
+                state = Status_BadNumberFormat;
+            }
+
+            // value R[0..3600]: required
+            if (!gc_block->words.r || isnanf(gc_block->values.r)) {
+                state = Status_BadNumberFormat;
+            }
+
+            // value
+            if (state != Status_BadNumberFormat) { // Are required parameters provided?
+                // briefly check ranges
+                if (gc_block->values.d < 0.0f || gc_block->values.d > 247.0f
+                    ||
+                    gc_block->values.p < 1.0f || gc_block->values.p > 9999.0f
+                    ||
+                    gc_block->values.q < 0.0f || gc_block->values.q > 1.0f
+                    ||
+                    gc_block->values.r < 0.0f || gc_block->values.r > 3600.0f) {
+                    
+                    state = Status_GcodeValueOutOfRange;                    
+                }
+                else {
+                    state = Status_OK;
+                }
+                    
+                gc_block->words.d = gc_block->words.p = gc_block->words.q = gc_block->words.r = Off; // Claim parameters.
+            }
+            break;            
+
         default:
             state = Status_Unhandled;
             break;
@@ -285,12 +352,11 @@ static status_code_t mbio_validate(parser_block_t *gc_block, parameter_words_t *
 // returns:    -
 static void mbio_execute(sys_state_t state, parser_block_t *gc_block) {
     bool handled = true;
+    char device_address = (char)gc_block->values.d;
+    uint16_t register_address = (uint16_t)gc_block->values.p - 1;
 
     switch(gc_block->user_mcode) {
         case UserMCode_Generic1:
-            char device_address = (char)gc_block->values.d;
-            uint16_t register_address = (uint16_t)gc_block->values.p - 1;
-
             uint16_t value = (uint16_t)gc_block->values.q;
             if ((char)gc_block->values.e == 5) {
                 value = value > 0 ? 0xff00 : 0;
@@ -320,6 +386,13 @@ static void mbio_execute(sys_state_t state, parser_block_t *gc_block) {
                 case ModBus_WriteRegister: // 6
                     mbio_ModBus_WriteRegister(device_address, register_address, value);
                     break;
+            }
+            break;
+
+        case UserMCode_Generic2: 
+            int32_t ret = mbio_Wait_ReadDiscreteInputs(device_address, register_address, (int32_t)gc_block->values.q, gc_block->values.r);
+            if (ret < 0) {
+                system_raise_alarm(Status_GCodeTimeout);
             }
             break;
 
