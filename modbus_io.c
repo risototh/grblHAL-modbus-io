@@ -21,8 +21,11 @@ along with this plugin.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "driver.h"
 
+
+
 #if MBIO_ENABLE
 
+#include <math.h>
 #include "modbus_io.h"
 #include "grbl/config.h"
 #include "grbl/hal.h"
@@ -196,11 +199,11 @@ int32_t mbio_Wait_ReadDiscreteInputs(char device_address, uint16_t register_addr
             ret = value;
             break;
         }
-        
+
         if (delay) {
             protocol_execute_realtime();
             hal.delay_ms(50, NULL);
-        } 
+        }
         else {
             break;
         }
@@ -208,7 +211,7 @@ int32_t mbio_Wait_ReadDiscreteInputs(char device_address, uint16_t register_addr
 
 #ifdef MBIO_DEBUG
     char buf[40];
-    sprintf(buf, "MODBUS WAIT VAL: %d, expected %d, rt %.2f s", ret, value, delay * MBIO_WAIT_STEP / 1000.0f);
+    sprintf(buf, "MODBUS WAIT VAL: %ld, expected %ld, rt %.2f s", ret, value, delay * MBIO_WAIT_STEP / 1000.0f);
     report_message(buf, Message_Plain);
 
 #endif
@@ -223,7 +226,7 @@ int32_t mbio_Wait_ReadDiscreteInputs(char device_address, uint16_t register_addr
 static user_mcode_t mbio_check(user_mcode_t mcode) {
     return mcode == UserMCode_Generic1 || mcode == UserMCode_Generic2
                      ? mcode
-                     : (user_mcode.check ? user_mcode.check(mcode) : UserMCode_Ignore);
+                     : (user_mcode.check ? user_mcode.check(mcode) : UserMCode_Unsupported);
 }
 
 // Validate M-code parameters
@@ -263,38 +266,38 @@ static status_code_t mbio_validate(parser_block_t *gc_block, parameter_words_t *
                 // briefly check ranges
                 if (gc_block->values.d < 0.0f || gc_block->values.d > 247.0f
                     ||
-                    (gc_block->values.e != (float)ModBus_ReadDiscreteInputs && gc_block->values.e != (float)ModBus_ReadInputRegisters 
+                    (gc_block->values.e != (float)ModBus_ReadDiscreteInputs && gc_block->values.e != (float)ModBus_ReadInputRegisters
                         && gc_block->values.e != (float)ModBus_WriteCoil && gc_block->values.e != (float)ModBus_WriteRegister
                         && gc_block->values.e != (float)ModBus_ReadHoldingRegisters && gc_block->values.e != (float)ModBus_ReadCoils)
                     ||
                     gc_block->values.p < 1.0f || gc_block->values.p > 9999.0f
                     ||
                     gc_block->values.q < 0.0f || gc_block->values.q > 65535.0f) {
-                	
-                    state = Status_GcodeValueOutOfRange;                    
+
+                    state = Status_GcodeValueOutOfRange;
                 }
                 else {
                     switch ((char)gc_block->values.e) {
                         case ModBus_ReadDiscreteInputs:
                         case ModBus_ReadInputRegisters:
-                            gc_block->values.q = 1.0f;    
+                            gc_block->values.q = 1.0f;
                             break;
                         case ModBus_WriteCoil:
                             break;
                         case ModBus_WriteRegister:
                             break;
                     }
-                    
+
                 	state = Status_OK;
                 }
-                    
+
                 gc_block->words.d = gc_block->words.e = gc_block->words.p = gc_block->words.q = Off; // Claim parameters.
                 //gc_block->user_mcode_sync = true;                           // Optional: execute command synchronized
             }
             break;
 
         // M102 D{0..247} P{1..9999} Q{0,1} R{0..3600}
-        case UserMCode_Generic2: 
+        case UserMCode_Generic2:
             // device address D[0..247]: required
             if (!gc_block->words.d || !isintf(gc_block->values.d)) {
                 state = Status_BadNumberFormat;
@@ -325,16 +328,16 @@ static status_code_t mbio_validate(parser_block_t *gc_block, parameter_words_t *
                     gc_block->values.q < 0.0f || gc_block->values.q > 1.0f
                     ||
                     gc_block->values.r < 0.0f || gc_block->values.r > 3600.0f) {
-                    
-                    state = Status_GcodeValueOutOfRange;                    
+
+                    state = Status_GcodeValueOutOfRange;
                 }
                 else {
                     state = Status_OK;
                 }
-                    
+
                 gc_block->words.d = gc_block->words.p = gc_block->words.q = gc_block->words.r = Off; // Claim parameters.
             }
-            break;            
+            break;
 
         default:
             state = Status_Unhandled;
@@ -342,7 +345,7 @@ static status_code_t mbio_validate(parser_block_t *gc_block, parameter_words_t *
     }
 
     // If not handled by us and another handler present then call it.
-    return state == Status_Unhandled && user_mcode.validate ? user_mcode.validate(gc_block, deprecated) : state;
+    return state == Status_Unhandled && user_mcode.validate ? user_mcode.validate(gc_block) : state;
 }
 
 
@@ -356,7 +359,7 @@ static void mbio_execute(sys_state_t state, parser_block_t *gc_block) {
     uint16_t register_address = (uint16_t)gc_block->values.p - 1;
 
     switch(gc_block->user_mcode) {
-        case UserMCode_Generic1:
+        case UserMCode_Generic1 : {
             uint16_t value = (uint16_t)gc_block->values.q;
             if ((char)gc_block->values.e == 5) {
                 value = value > 0 ? 0xff00 : 0;
@@ -388,13 +391,15 @@ static void mbio_execute(sys_state_t state, parser_block_t *gc_block) {
                     break;
             }
             break;
+          }
 
-        case UserMCode_Generic2: 
+        case UserMCode_Generic2: {
             int32_t ret = mbio_Wait_ReadDiscreteInputs(device_address, register_address, (int32_t)gc_block->values.q, gc_block->values.r);
             if (ret < 0) {
                 system_raise_alarm(Status_GCodeTimeout);
             }
             break;
+          }
 
         default:
             handled = false;
@@ -407,13 +412,13 @@ static void mbio_execute(sys_state_t state, parser_block_t *gc_block) {
     }
 }
 
-static void mbio_rx_packet (modbus_message_t *msg) {
-    if (!(msg->adu[0] & 0x80)) {
-        switch((mbio_response_t)msg->context) {
-            case MBIO_Command:
-                // rewrite in opposite way - use context to distinguish between commands and then check if the response corresponds to command sent!
 
-                // process the responses (put red value into the system.var5399)
+
+static void mbio_rx_packet(modbus_message_t *msg) {
+    if (!(msg->adu[0] & 0x80)) {
+        switch ((mbio_response_t)msg->context) {
+            case MBIO_Command:
+                // process the responses (put read value into system.var5399)
                 switch (msg->adu[1]) {
                     case ModBus_ReadDiscreteInputs:
                         sys.var5399 = msg->adu[3] & 0x01;
@@ -424,47 +429,49 @@ static void mbio_rx_packet (modbus_message_t *msg) {
                         break;
 
                     case ModBus_ReadInputRegisters:
-                    case ModBus_ReadHoldingRegisters:
+                    case ModBus_ReadHoldingRegisters: {
                         sys.var5399 = (int32_t)modbus_read_u16(&msg->adu[3]);
                         break;
+                    }
                 }
 
 #ifdef MBIO_DEBUG
-                char buf[30];
-                sprintf(buf, "MODBUS RX: %02X %02X %02X %02X %02X %02X %02X %02X", msg->adu[0], msg->adu[1], msg->adu[2], msg->adu[3], msg->adu[4], msg->adu[5], msg->adu[6], msg->adu[7]);
-                report_message(buf, Message_Plain);
+                {
+                    char buf[40];
+                    sprintf(buf, "MODBUS RX: %02X %02X %02X %02X %02X %02X %02X %02X",
+                            msg->adu[0], msg->adu[1], msg->adu[2], msg->adu[3],
+                            msg->adu[4], msg->adu[5], msg->adu[6], msg->adu[7]);
+                    report_message(buf, Message_Plain);
 
-                switch (msg->adu[1]) {
-                    case ModBus_ReadDiscreteInputs:
-                        if (msg->adu[3] & 0x01 == 0x01) {
-                            sprintf(buf, "MODBUS RESPONSE: on (0x%02X)", msg->adu[3]);
+                    switch (msg->adu[1]) {
+                        case ModBus_ReadDiscreteInputs:
+                            if ((msg->adu[3] & 0x01) == 0x01) {
+                                sprintf(buf, "MODBUS RESPONSE: on (0x%02X)", msg->adu[3]);
+                                report_message(buf, Message_Plain);
+                            } else if ((msg->adu[3] & 0x01) == 0x00) {
+                                sprintf(buf, "MODBUS RESPONSE: off (0x%02X)", msg->adu[3]);
+                                report_message(buf, Message_Plain);
+                            }
+                            break;
+
+                        case ModBus_ReadCoils:
+                            sprintf(buf, "MODBUS RESPONSE: %d (0x%02X)", msg->adu[3], msg->adu[3]);
                             report_message(buf, Message_Plain);
-                        }
-                        else if (msg->adu[3] & 0x01 == 0x00) {
-                            sprintf(buf, "MODBUS RESPONSE: off (0x%02X)", msg->adu[3]);
+                            break;
+
+                        case ModBus_ReadInputRegisters:
+                        case ModBus_ReadHoldingRegisters: {
+                            uint16_t value = modbus_read_u16(&msg->adu[3]);
+                            sprintf(buf, "MODBUS RESPONSE: %u (0x%04X)", value, value);
                             report_message(buf, Message_Plain);
+                            break;
                         }
-                        break;
 
-                    case ModBus_ReadCoils:
-                        sprintf(buf, "MODBUS RESPONSE: %d (0x%02X)", msg->adu[3], msg->adu[3]);
-                        report_message(buf, Message_Plain);
-                        break;
-
-                    case ModBus_ReadInputRegisters:
-                    case ModBus_ReadHoldingRegisters:
-                        uint16_t value = modbus_read_u16(&msg->adu[3]);
-                        sprintf(buf, "MODBUS RESPONSE: %u (0x%04X)", value, value);
-                        report_message(buf, Message_Plain);
-                        break;
-
-                    case ModBus_WriteCoil:
-                        report_message("MODBUS RESPONSE: OK", Message_Plain);
-                        break;
-
-                    case ModBus_WriteRegister:
-                        report_message("MODBUS RESPONSE: OK", Message_Plain);
-                        break;
+                        case ModBus_WriteCoil:
+                        case ModBus_WriteRegister:
+                            report_message("MODBUS RESPONSE: OK", Message_Plain);
+                            break;
+                    }
                 }
 #endif
                 break;
@@ -472,9 +479,8 @@ static void mbio_rx_packet (modbus_message_t *msg) {
             default:
                 break;
         }
-        
-    }
-    else {
+
+    } else {
         report_message("MODBUS ERROR", Message_Warning);
     }
 }
@@ -482,9 +488,9 @@ static void mbio_rx_packet (modbus_message_t *msg) {
 
 
 void mbio_init(void) {
-	hal.user_mcode.check = mbio_check;
-    hal.user_mcode.validate = mbio_validate;
-    hal.user_mcode.execute = mbio_execute;
+	grbl.user_mcode.check = mbio_check;
+    grbl.user_mcode.validate = mbio_validate;
+    grbl.user_mcode.execute = mbio_execute;
 
 	on_report_options = grbl.on_report_options;
     grbl.on_report_options = mbio_report_options;

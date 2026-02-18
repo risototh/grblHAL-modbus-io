@@ -9,7 +9,7 @@ This plugin is written for the Teensy 4.1 based open source board made by Phil B
 
 Plugin was tested with this board: https://www.aliexpress.com/item/1005004933766085.html
 
-> Note: The extension board must be set up to the same baudrate and async setting as the grblHAL board. Usually something like 19200 8N1, or 38400 8N1. This can be achieved by setting the `MODBUS_BAUDRATE` constant in _my_machine.h_. 
+> Note: The extension board must be set up to the same baudrate and async setting as the grblHAL board. Usually something like 19200 8N1, or 38400 8N1. This can be achieved by setting the `MODBUS_BAUDRATE` constant in _my_machine.h_.
 
 ### HOW TO INSTALL
 
@@ -31,38 +31,72 @@ Plugin was tested with this board: https://www.aliexpress.com/item/1005004933766
     #define MBIO_ENABLE 1
 ```
 5) If you want to enable debug messages of the plugin, add this line to _my_machine.h_:
-```	
+```
 	#define MBIO_DEBUG
 ```
 6) Compile and flash your machine and enjoy.
 
-### HOW TO USE
+## 📘 How to Use
 
-There are two M-codes implemented for now. `M101` and `M102`.
+This firmware implements **two M-codes** for Modbus communication: `M101` and `M102`.
 
-Format of **M101** is: `M101 D{0..247} E{1,2,3,4,5,6} P{1..9999} [Q{0..65535}]`
-- D{0..247} - device address
-- E{2,3,4,5,6} - function code, see https://ipc2u.com/articles/knowledge-base/modbus-rtu-made-simple-with-detailed-descriptions-and-examples/#cmnd
-- P{1..9999} - register address
-- Q{0..65535} - register value, optional, required for function codes {1,5,6}
+---
 
-**Examples:**
-- turn on DO1 on slave with address 2: `M101 D2 E5 P1 Q1`
-- turn off DO1 on slave with address 2: `M101 D2 E5 P1 Q0`
-- read DI2 on slave with address 2: `M101 D2 E2 P2`
-- read DO1-DO4 on slave with address 2: `M101 D2 E1 P1 Q4`
-- read holding register 254 on slave with address 2: `M101 D2 E3 P254`
-- read AI3 on slave with address 2: `M101 D2 E4 P3`
+### 🔹 M101 – Send a Modbus Command
 
-The read values are stored in _sys.var5399_ for use in the ATC macro, but not tested so far.
+```
+M101 D{0..247} E{1,2,3,4,5,6} P{1..9999} [Q{0..65535}]
+```
 
-Format of **M102** is: `M102 D{0..247} P{1..9999} Q{0,1} R{0.0 .. 3600.0}`
-- D{0..247} - device address
-- P{1..9999} - register address
-- Q{0,1} - register value to wait for
-- R{0.0 .. 3600.0} - timeout in seconds (it will be more, as the MODBUS communication is currently not counted in)
-
+**Parameters**
+- `D` – **Device address** of the Modbus slave (0–247)
+- `E` – **Function code**
+  - `1` – Read Coils
+  - `2` – Read Discrete Inputs
+  - `3` – Read Holding Registers
+  - `4` – Read Input Registers
+  - `5` – Write Single Coil
+  - `6` – Write Single Register
+- `P` – **Register/coil address** (1–9999)  
+  *(P=1 corresponds to Modbus address 0 internally)*
+- `Q` – **Value** (optional for reads, required for writes)  
+  - For **Write Coil** (E=5): `Q1` = ON (0xFF00), `Q0` = OFF (0x0000)
+  - For **Write Register** (E=6): `Q` sets register value
 
 **Examples**
-- read DI2 on slave with address 2, wait for 1 up to 10 seconds: `M102 D2 P2 Q1 R10`
-- read DI6 on slave with address 10, wait for 0 up to 5.4 seconds: `M102 D10 P6 Q0 R5.4`
+```
+M101 D2 E5 P1 Q1      ; turn ON DO1 on slave address 2
+M101 D2 E5 P1 Q0      ; turn OFF DO1 on slave address 2
+M101 D2 E2 P2         ; read DI2 on slave address 2
+M101 D2 E1 P1 Q4      ; read DO1–DO4 (4 coils starting at DO1)
+M101 D2 E3 P254       ; read Holding Register 254
+M101 D2 E4 P3         ; read Analog Input 3 (Input Register 3)
+```
+
+**Result:**  
+- Read values are stored in `sys.var5399` for later use (e.g., in ATC macros).
+
+---
+
+### 🔹 M102 – Wait for a Value
+
+```
+M102 D{0..247} P{1..9999} Q{0,1} R{0.0..3600.0}
+```
+
+**Parameters**
+- `D` – Device address (0–247)
+- `P` – Register/coil address (1–9999)
+- `Q` – Desired value (0 or 1)
+- `R` – Timeout in seconds (up to 3600)
+
+**Examples**
+```
+M102 D2 P2 Q1 R10      ; wait up to 10s for DI2 to become 1
+M102 D10 P6 Q0 R5.4    ; wait up to 5.4s for DI6 to become 0
+```
+
+
+
+###Changelog:###
+2025-07-29 PvdW Fixed compile errors, tested with grblHAL 20250724
